@@ -1,0 +1,58 @@
+name: Agent Gate Guard
+
+# Enforces that the human-checkpoint labels (`ready` → plan, `approved` → implement)
+# can ONLY be applied by a human on the maintainer allowlist. An agent that can apply
+# its own gate labels has no gate. If a gate label is applied by a Bot identity or by
+# anyone not on the allowlist, it is reverted, a loud comment is posted, and the run fails.
+#
+# FAIL-CLOSED: if the allowlist variable is unset, NOBODY can apply gate labels until you
+# set it — `gh api -X POST repos/<owner>/<repo>/actions/variables -f name=AGENT_GATE_MAINTAINERS -f value="you,teammate"`.
+#
+# The companion `gate-check` job inside agent-plan.yml / agent-implement.yml additionally
+# PREVENTS the run (this workflow can only revert after the fact, since GitHub fires
+# matching workflows concurrently).
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  guard:
+    if: ${{ github.event.label.name == 'ready' || github.event.label.name == 'approved' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Enforce human-only gate labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
+          LABEL: ${{ github.event.label.name }}
+          ACTOR: ${{ github.event.sender.login }}
+          ACTOR_TYPE: ${{ github.event.sender.type }}
+          MAINTAINERS: ${{ vars.AGENT_GATE_MAINTAINERS }}
+        run: |
+          set -euo pipefail
+
+          allowed=no
+          # A Bot identity (github-actions[bot], any GitHub App) can NEVER apply a gate label.
+          if [ "$ACTOR_TYPE" != "Bot" ] && [ -n "$MAINTAINERS" ]; then
+            case ",${MAINTAINERS}," in
+              *",${ACTOR},"*) allowed=yes ;;
+            esac
+          fi
+
+          if [ "$allowed" = "yes" ]; then
+            echo "Gate label '$LABEL' applied by authorized human '$ACTOR'."
+            exit 0
+          fi
+
+          echo "::error::Gate label '$LABEL' applied by non-authorized actor '$ACTOR' (type=$ACTOR_TYPE) — reverting."
+          gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$LABEL"
+          gh issue comment "$ISSUE_NUM" --repo "$REPO" --body "Gate label \`$LABEL\` removed.
+
+          \`$LABEL\` is a human checkpoint and may only be applied by a maintainer on the allowlist (repo variable \`AGENT_GATE_MAINTAINERS\`). It was applied by \`$ACTOR\` (type: \`$ACTOR_TYPE\`), so it has been reverted. A maintainer must apply it to advance this issue."
+          exit 1

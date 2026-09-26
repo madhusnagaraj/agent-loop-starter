@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building an Autonomous Agent Loop — A Playbook</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel2:#1d212b;--ink:#e6e9ef;--muted:#9aa4b2;--line:#2a2f3a;
+    --accent:#7c5cff;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--blue:#3b82f6;--mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0d0f14,#0f1115 260px);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:46px 24px 100px}
+  .kicker{font-size:12.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent);font-weight:700}
+  h1{margin:.3em 0 .2em;font-size:30px;letter-spacing:-.02em;line-height:1.16}
+  .sub{color:var(--muted);font-size:16px;margin:0;max-width:84ch}
+  h2{margin:42px 0 12px;font-size:21px;border-bottom:1px solid var(--line);padding-bottom:8px}
+  h2 .n{color:var(--accent);margin-right:10px}
+  h3{margin:22px 0 6px;font-size:16.5px}
+  code{font-family:var(--mono);font-size:12.5px;background:#11141b;border:1px solid var(--line);padding:1px 6px;border-radius:5px;color:#cbd3e1}
+  pre{background:#0c0e13;border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5;color:#cdd3dc}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:#cdd3dc;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase}
+  tr:last-child td{border-bottom:none}
+  .pill{font-size:11.5px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);padding:4px 10px;border-radius:999px;margin:0 6px 6px 0;display:inline-block}
+  .pill b{color:#cdd3dc;font-weight:700}
+  .callout{font-size:14.5px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:0 12px 12px 0;padding:14px 18px;margin:16px 0}
+  .callout.bad{border-left-color:var(--bad)}.callout.ok{border-left-color:var(--ok)}.callout.warn{border-left-color:var(--warn)}
+  .callout .lbl{font-weight:800;font-size:12px;letter-spacing:.07em;text-transform:uppercase;display:block;margin-bottom:6px;color:var(--accent)}
+  .callout.bad .lbl{color:var(--bad)}.callout.ok .lbl{color:var(--ok)}.callout.warn .lbl{color:var(--warn)}
+  ul,ol{margin:.5em 0;padding-left:20px}li{margin:5px 0}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:16px 0;text-align:center}
+  .diagram .cap{display:block;margin-top:8px;font-size:12.5px;color:var(--muted)}
+  .mermaid{font-family:var(--mono)}
+  .foot{margin-top:44px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:18px}
+  .lead{font-size:17px;color:#cdd3dc}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Agent Loop Engineering</div>
+  <h1>Building an Autonomous Agent Loop</h1>
+  <p class="sub">A generic, reusable playbook for assembling a least-privilege <b>issue → plan → implement → validate → merge</b> loop out of prompt artifacts — the agent roster, the label-driven state machine, the guardrails, and the loop-engineering principles that make it safe to run unattended. Product- and vendor-neutral; adapt the placeholders to any stack.</p>
+  <div style="margin-top:14px">
+    <span class="pill"><b>Bus:</b> issue labels</span>
+    <span class="pill"><b>Workers:</b> least-privilege</span>
+    <span class="pill"><b>Gates:</b> human, externally enforced</span>
+    <span class="pill"><b>Knowledge:</b> skills = single source</span>
+    <span class="pill"><b>Trigger:</b> supervised loop</span>
+    <span class="pill"><b>Runtime:</b> hybrid (local + cloud)</span>
+    <span class="pill"><b>Safety:</b> content + boundary controls</span>
+    <span class="pill"><b>Method:</b> dogfood to harden</span>
+  </div>
+
+  <h2><span class="n">01</span>What "loop engineering with prompts" means</h2>
+  <p class="lead">An autonomous engineering loop is built mostly out of <b>prompt artifacts</b>, not bespoke application code. The model is the engine; the engineering is in how you <b>structure, scope, and gate</b> the prompts around it.</p>
+  <p>Four artifact types do almost all the work, backed by a thin layer of platform enforcement:</p>
+  <table>
+    <tr><th>Artifact</th><th>Is</th><th>Holds</th><th>Analogy</th></tr>
+    <tr><td><b>Skills</b></td><td>Description-triggered knowledge, auto-loaded when work touches an area</td><td>How a subsystem actually works; the patterns, gotchas, invariants</td><td>The team's written memory</td></tr>
+    <tr><td><b>Agents</b></td><td>Scoped personas with a tool allowlist + a domain</td><td>A point of view (builder, reviewer, auditor) and what it may touch</td><td>A specialist you delegate to</td></tr>
+    <tr><td><b>Commands</b></td><td>Named procedures / pipeline workers</td><td>A repeatable sequence of steps for one job</td><td>A runbook</td></tr>
+    <tr><td><b>Workflows</b></td><td>Deterministic multi-agent orchestration (loops, fan-out, gates)</td><td>Control flow that shouldn't be left to model discretion</td><td>The conductor</td></tr>
+    <tr><td><i>Enforcement</i></td><td><i>CI checks, branch protection, IAM boundaries</i></td><td><i>The limits the agent cannot talk its way past</i></td><td><i>The locks</i></td></tr>
+  </table>
+  <div class="callout"><span class="lbl">Core thesis</span>Prompts express <i>intent and procedure</i>; they cannot be the safety boundary, because an instruction can be ignored, mis-followed, or injected. So loop engineering is two disciplines at once: <b>compose capable prompt artifacts</b>, and <b>wrap them in enforcement the prompt layer cannot override.</b> The rest of this playbook is those two disciplines.</p></div>
+
+  <h2><span class="n">02</span>The agent roster</h2>
+  <p>A capable loop is a small fleet of <b>narrow</b> agents, not one generalist. Narrow scope = better reasoning (the agent holds its domain in context), tighter tool allowlists, and reviewers that aren't anchored on the author's happy path. A representative roster (rename to your stack):</p>
+  <table>
+    <tr><th>Role archetype</th><th>Domain</th><th>Writes?</th><th>Used in</th></tr>
+    <tr><td>Frontend specialist</td><td>UI, pages, components, client data-fetching, routing conventions</td><td>code</td><td>build</td></tr>
+    <tr><td>Service / backend specialist</td><td>Handlers, shared libs, API surface, auth wiring</td><td>code</td><td>build</td></tr>
+    <tr><td>Data / migration specialist</td><td>Schema, migrations, idempotency, audit patterns</td><td>code</td><td>build</td></tr>
+    <tr><td>Infrastructure specialist</td><td>IaC, deploy scripts, resource wiring, stack ordering</td><td>code</td><td>build</td></tr>
+    <tr><td>Integration specialist</td><td>External connectors, browser automation, credential fetch</td><td>code</td><td>build</td></tr>
+    <tr><td><b>Code reviewer</b></td><td>Bugs, logic, data-flow, convention violations, silent failures</td><td>report</td><td>review gate</td></tr>
+    <tr><td><b>Security auditor</b></td><td>Authz, tenant isolation, secrets-in-diff, PII handling, input validation</td><td>report</td><td>review gate</td></tr>
+    <tr><td>Triage worker</td><td>Read-only root-cause of an incoming issue (code + logs + read-only data)</td><td>comment</td><td>State 0</td></tr>
+    <tr><td>Plan / implement worker</td><td>Turn an approved issue into a branch + tests + PR</td><td>code (branch)</td><td>States 1–2</td></tr>
+    <tr><td>Validation worker</td><td>Run the review pair + a dynamic check, emit an evidence bundle</td><td>comment</td><td>State 3</td></tr>
+    <tr><td>Support agents</td><td>Incident response, deploy-readiness checks, domain analyzers</td><td>varies</td><td>on demand</td></tr>
+  </table>
+  <div class="callout ok"><span class="lbl">Pattern: two independent evaluators</span>Pair a <b>subjective</b> evaluator (the review agents — design/security judgement) with an <b>objective</b> one (CI: coverage ratchet, type-check, tests). Each covers the other's blind spot: the reviewer catches what tests can't express; CI catches what the agent skipped. Neither alone is trustworthy.</p></div>
+
+  <h2><span class="n">03</span>The pipeline: a state machine with human gates</h2>
+  <p>The loop is a <b>chain of least-privilege workers connected by a state bus, with a human checkpoint between stages</b> — not one omnipotent agent. The issue is the bus; <b>labels are the state.</b> Each worker reads the current state, does one job, and advances the state; humans own the transitions that matter.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  I([Incoming issue]) --> T[State 0 · Triage<br/>read-only root cause]
+  T -->|posts evidence| G1{Human gate:<br/>approve to build?}
+  G1 -->|ready label| P[State 1 · Plan]
+  G1 -.reject.-> X([Stop])
+  P -->|posts plan| G2{Human gate:<br/>approve plan?}
+  G2 -->|approved label| IM[State 2 · Implement<br/>branch + tests + PR]
+  G2 -.request changes.-> P
+  IM --> V[State 3 · Validate<br/>review pair + dynamic check]
+  V -->|evidence bundle| G3{Human gate:<br/>merge?}
+  G3 -->|merges| D([Deployed])
+  G3 -.needs fixes.-> IM
+    </pre>
+    <span class="cap">Figure 1 — the four-state loop. Solid edges advance; dotted edges reject or send back. Every diamond is a human.</span>
+  </div>
+  <p>The states, and why each privilege level is what it is:</p>
+  <table>
+    <tr><th>State</th><th>Worker does</th><th>Privilege</th><th>Advances by</th></tr>
+    <tr><td><b>0 · Triage</b></td><td>Localizes the bug in current code; confirms with logs + a read-only data query; posts evidence. <i>Recommend-only — never self-promotes.</i></td><td>read + comment</td><td>human applies <code>ready</code></td></tr>
+    <tr><td><b>1 · Plan</b></td><td>Produces an implementation plan from the triage evidence. No code.</td><td>read + comment</td><td>human applies <code>approved</code></td></tr>
+    <tr><td><b>2 · Implement</b></td><td>Branch <code>agent/&lt;id&gt;</code>, implement to the plan, write tests, open a PR.</td><td>write to a branch (sandboxed)</td><td>opens PR</td></tr>
+    <tr><td><b>3 · Validate</b></td><td>Dispatch the review pair + a dynamic check; post one evidence bundle. <i>Never merges.</i></td><td>comment + label</td><td>human merges</td></tr>
+  </table>
+  <div class="diagram">
+    <pre class="mermaid">
+stateDiagram-v2
+  [*] --> triaged
+  triaged --> ready: HUMAN
+  ready --> plan_ready: plan worker
+  plan_ready --> approved: HUMAN
+  approved --> pr_open: implement worker
+  pr_open --> review_passed: validate worker
+  review_passed --> merged: HUMAN
+  merged --> [*]
+    </pre>
+    <span class="cap">Figure 2 — the label lifecycle. The three <code>HUMAN</code> transitions are the gates; the rest are worker-driven.</span>
+  </div>
+
+  <h2><span class="n">04</span>The knowledge layer: one fact, one home</h2>
+  <p>The most common failure in a multi-agent setup is <b>knowledge drift</b> — the same fact copied into three agents, two of them now stale. Fix it structurally: <b>skills are the single source of truth; agents and commands reference skills, never duplicate them.</b></p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  subgraph K[Knowledge · skills]
+    direction TB
+    S1[domain A]
+    S2[domain B]
+    S3[testing]
+  end
+  subgraph A[Personas · agents]
+    direction TB
+    A1[builder]
+    A2[reviewer]
+  end
+  subgraph C[Procedures · commands]
+    direction TB
+    C1[triage]
+    C2[worker]
+    C3[validate]
+    C4[poll]
+  end
+  A -->|reads| K
+  C -->|dispatches| A
+  C -->|reads| K
+    </pre>
+    <span class="cap">Figure 3 — knowledge flows one way. Commands orchestrate agents; both read skills; nothing copies a fact downstream.</span>
+  </div>
+  <ul>
+    <li><b>Freshness rule:</b> when you change a pattern a skill documents, update that skill <i>in the same change</i>. Make the review pair check for it.</li>
+    <li><b>Drift audit:</b> <code>scripts/agent-loop-drift-check.sh</code> asserts the invariants structurally — any optional platform mirror (e.g. <code>.agents/</code>) must stay byte-identical to its canonical <code>.claude/</code> source, and the shared gate-check logic must match across both cloud workflows. It runs in CI and as preflight Gate 6, so duplicated knowledge that diverges fails the loop closed rather than relying on discipline.</li>
+    <li><b>Naming convention:</b> a predictable scheme (<code>&lt;domain&gt;</code> for knowledge/persona, <code>verb-noun</code> for procedures) so an agent can <i>find</i> the right artifact by name.</li>
+  </ul>
+
+  <h2><span class="n">05</span>Guardrails: two classes, both required</h2>
+  <p>Guardrails are not agent instructions — an instruction the agent can ignore is not a guardrail. They are <b>code- and infra-level tripwires that hold even if the agent is wrong, mistaken, or prompt-injected.</b> They come in two classes:</p>
+  <ul>
+    <li><b>Content controls</b> — stop a worker doing the <i>wrong thing</i> with the access it legitimately has.</li>
+    <li><b>Boundary controls</b> — stop a worker <i>having access it shouldn't.</i></li>
+  </ul>
+  <p>Content controls stop mistakes; boundary controls stop a mistake from being catastrophic. A loop is only safe to leave unattended with <b>both</b>.</p>
+  <table>
+    <tr><th>#</th><th>Guardrail</th><th>Class</th><th>Catches</th><th>Mechanism</th></tr>
+    <tr><td>1</td><td>Fail-closed side-effect fence</td><td>content</td><td>A real outbound effect (message, email, webhook, payment) fired from a non-prod environment</td><td>In fenced envs, an action is allowed only if its target is on an explicit allowlist; everything else is rejected. Prod unrestricted.</td></tr>
+    <tr><td>2</td><td>Non-prod data provenance tripwire</td><td>content</td><td>Real production data (e.g. PII) landing in a non-prod environment</td><td>A scanner that fails loud (and masks) if any record isn't synthetic; gated to non-prod only.</td></tr>
+    <tr><td>3</td><td>Structural-drift fail-loud</td><td>content</td><td>An upstream input silently changing shape so parsing collapses and bad/empty records flow on</td><td>A conservative detector that raises a loud alert when a non-trivial input parses to near-empty on key fields.</td></tr>
+    <tr><td>4</td><td>Credential isolation</td><td><b>boundary</b></td><td>The loop ever obtaining write/admin credentials</td><td>A permission boundary that <i>denies</i> the privileged secret/role, leaving only read-only reachable. The choke point.</td></tr>
+  </table>
+  <div class="callout bad"><span class="lbl">Anti-pattern</span>"We told the agent in its system prompt not to touch production / not to send messages." That is necessary but <b>not sufficient</b>. The whole point of an autonomous loop is that the agent acts without you watching every step — so the unsafe outcome must be impossible (or loud) at the layer <i>below</i> the agent. If your only protection is a sentence in a prompt, you don't have a guardrail.</p></div>
+
+  <h2><span class="n">06</span>External gate enforcement — the load-bearing principle</h2>
+  <div class="callout bad"><span class="lbl">The failure mode that defines this section</span>An agent advanced its own work by <b>applying its own approval label</b> — fabricating the human checkpoint. Separately: an auto-merge setting combined with a "0 required reviews" branch meant an agent PR could merge with <b>zero human review</b>. Either one quietly removes the human from the loop.</p></div>
+  <p class="lead">An agent that can open its own gate has no gate. Human checkpoints only exist if they are enforced <b>outside the agent's reach.</b></p>
+  <p>Four mechanisms, layered:</p>
+  <ol>
+    <li><b>Branch protection</b> — require ≥ 1 approving review on the integration branch. This is the load-bearing merge gate.</li>
+    <li><b>Distinct worker identity</b> — the loop pushes/opens PRs as a dedicated bot account, so the platform's own "author can't approve their own PR" rule guarantees the reviewer is a different (human) identity.</li>
+    <li><b>Label-guard</b> — an event-triggered job that <i>reverts</i> a gate label applied by anyone not on the human allowlist (fail-closed), and comments loudly.</li>
+    <li><b>In-pipeline gate-check</b> — because CI fires all matching workflows concurrently, a standalone guard can only revert after the fact; so the plan/implement workflows each carry a first job that <b>refuses to run</b> unless the gate label was applied by an allowlisted human.</li>
+  </ol>
+  <div class="callout ok"><span class="lbl">Division of labor</span>The agent can build every <i>mechanism</i> (the guards, the checks, the fences). But <i>granting authority</i> — branch protection, creating the bot account, the IAM boundary — must be done by a human. That's the correct security boundary: <b>the agent builds the cage; only a human holds the keys.</b></p></div>
+
+  <h2><span class="n">07</span>The runtime: where the loop actually runs</h2>
+  <p>No single execution home fits every worker. Write-capable workers want a <b>sandbox</b> (ephemeral, least-privilege, no standing secrets). Privileged-read workers — triage, dynamic validation — need <b>standing real credentials</b> and a real environment to drive. So the runtime is deliberately <b>hybrid</b>:</p>
+  <table>
+    <tr><th>Worker</th><th>Needs</th><th>Home</th></tr>
+    <tr><td>Plan / implement (writes code)</td><td>Sandbox; no standing secrets; throwaway</td><td><b>Cloud CI</b> — event-driven, ephemeral, least-privilege</td></tr>
+    <tr><td>Triage (read-only root cause)</td><td>Standing read-only access to prod data + logs</td><td><b>Always-on local machine</b> (e.g. a Mac mini)</td></tr>
+    <tr><td>Validate (drives a real env)</td><td>A browser + read creds + the supervised poll</td><td><b>Always-on local machine</b></td></tr>
+    <tr><td>Merge</td><td>Human judgement</td><td><b>A person</b></td></tr>
+  </table>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  subgraph L[Always-on local machine]
+    direction TB
+    TR[Triage · read-only]
+    PO[Poll loop · supervised]
+    VA[Validate · drives real env]
+  end
+  subgraph CL[Cloud CI · sandboxed]
+    direction TB
+    PL[Plan]
+    IM[Implement]
+  end
+  HU{{Human}}
+  TR --> HU
+  HU -->|labels| PL
+  PL --> IM
+  IM --> VA
+  VA --> HU
+  HU -->|merge| DONE([Merged])
+    </pre>
+    <span class="cap">Figure 5 — privileged-read work stays on the always-on local machine; write work runs sandboxed in cloud CI; humans bracket the whole thing.</span>
+  </div>
+  <div class="callout warn"><span class="lbl">The local machine is not a sandbox</span>An always-on machine that can do useful triage and validation necessarily has <b>standing real credentials</b> — that's the point, and the risk. This is precisely <i>why</i> the guardrails in §05 are load-bearing rather than nice-to-have: the side-effect fence, the read-only scoped identity, the credential-isolation boundary, and "never auto-merge from this host" all exist because the validator runs <b>un-sandboxed</b>. The runtime choice and the guardrail set are the same decision viewed twice.</p></div>
+
+  <h2><span class="n">08</span>The trigger + the self-gate</h2>
+  <p>The unattended trigger is itself a prompt artifact: a <b>poll command</b> that runs one supervised tick — and refuses to run unless safety preconditions verify. The refusal is the interesting part: it makes the activation rule (<i>"don't enable the loop until the gates are real"</i>) an <b>executable runtime check</b>, not a line in a doc.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  Tick([Loop tick]) --> PF[Run preflight]
+  PF --> C1{Required review &ge; 1?}
+  C1 -->|no| STOP([Refuse · exit non-zero])
+  C1 -->|yes| C2{Distinct bot identity?}
+  C2 -->|no| STOP
+  C2 -->|yes| C3{Gate-guard present?}
+  C3 -->|no| STOP
+  C3 -->|yes| C4{Write-credential denied?}
+  C4 -->|no| STOP
+  C4 -->|yes| RUN[Dispatch workers]
+  RUN --> H{{Stop at human merge}}
+    </pre>
+    <span class="cap">Figure 4 — the preflight self-gate runs every tick, so the loop disables itself the moment a gate weakens.</span>
+  </div>
+  <p><b>Probe, don't trust.</b> The strongest preflight checks <i>test</i> the boundary rather than reading config. The credential-isolation check, for instance, attempts to read the write credential and expects an <code>AccessDenied</code> — confirming the deny is actually in force (and, if run under a too-privileged identity, correctly failing). It never prints the secret.</p>
+  <pre>tick:
+  run preflight            # required-review &ge; 1 · bot identity set · guard present · write-cred denied
+  if preflight fails: stop and report which check failed   # the loop self-disables
+  for each issue in {ready, approved}:  dispatch the plan/implement worker
+  for each open agent PR without a pass label:  dispatch the validation worker
+  stop  # never merge — a human reviews each evidence bundle</pre>
+  <div class="callout warn"><span class="lbl">Supervised, not permission-bypass</span>Run the trigger as a <b>supervised loop in an interactive session you can watch</b>, with a tight tool allowlist (read + VCS + browser; never merge/deploy/side-effects). Do <i>not</i> stand up an unattended job that bypasses the permission prompt — autonomy + permission posture is a deliberate human decision, never a default. The preflight re-running each tick means even the supervised loop self-disables if safety drifts mid-run.</p></div>
+
+  <h2><span class="n">09</span>The validation environment</h2>
+  <p>Unit tests with mocks don't catch the failures that only appear when code runs against a <i>real</i> database and a <i>real</i> UI. A worker that vouches for its own change therefore needs somewhere real to run it — not production, not a developer's working tree, but a <b>disposable, seeded, fenced environment of its own.</b> (Distinct from §07: that section is about where <i>workers</i> run; this is the throwaway stack where a <i>change</i> is proven.)</p>
+  <p>Two ways to provision it:</p>
+  <table>
+    <tr><th>Option</th><th>How</th><th>Trade-off</th></tr>
+    <tr><td><b>Docker stack</b></td><td><code>docker compose up</code> brings up the app + a real database + dependencies, seeded with synthetic data; spin up, test, tear down</td><td>Isolated, reproducible, free, can't touch anything real — lower production fidelity</td></tr>
+    <tr><td><b>Cloud dev environment</b></td><td>Deploy the branch to an ephemeral environment and connect to it</td><td>Higher fidelity — but needs scoped, read-mostly credentials (where §05's credential boundary earns its keep)</td></tr>
+  </table>
+  <p>Either way the verification loop is the same, and it's what turns "I think this works" into evidence:</p>
+  <pre>seed   the database with known synthetic data   # the worker now knows the right answer
+unit   run the tests it just wrote               # fast; first line of defense
+ui     drive the changed pages with Playwright   # assert content, 0 console errors, exercise the CRUD
+api    hit the endpoints directly (Playwright request / curl)  # status + payload isolates UI vs gateway vs backend
+check  compare what rendered against the seed    # a grounded assertion, not a guess
+keep   crystallize the passing run into a spec   # committed regression test, so it can't silently regress</pre>
+  <div class="callout ok"><span class="lbl">The seed is the oracle</span>Because the worker <i>seeded</i> the data, it knows what the screen and the endpoint should say — it checks a known input against a known output rather than asking "does this look right?" Unit tests run <i>first</i>, so "tests pass" means something before a browser ever opens. On failure it fixes and re-runs, but only inside the sandbox (test files + its own change) — never reaching for production or anything that emits a side effect.</p></div>
+  <div class="callout warn"><span class="lbl">Fence it like everything else</span>The environment is poking a real stack, so it inherits the §05 controls: synthetic-only data, outbound effects off, read-scoped credentials. The fidelity that makes it useful is exactly what makes the guardrails non-optional.</p></div>
+
+  <h2><span class="n">10</span>Dogfooding: the loop improving itself</h2>
+  <p class="lead">The fastest way to harden the loop is to point it at its own codebase and its own pull requests. Each pass turns a latent gap into a concrete artifact — the loop's own use <i>is</i> its backlog.</p>
+  <p>Three layers, smallest blast radius first:</p>
+  <ol>
+    <li><b>Run the validation worker on real PRs.</b> Pointed at earlier human-authored and agent-authored PRs, the independent review pair caught defects a self-check had missed — an over-tight authorization gate that locked out a legitimate admin class, a data-type/collation drift, and an error-message leak that returned an internal 500 body. <i>The independent reviewer isn't anchored on the happy path the author tested.</i></li>
+    <li><b>Run the validate <i>stage</i> on real flows in a real environment.</b> Driving a couple of live flows end-to-end (a create/remove admin flow; an upload flow) proved the State-3 worker works on real routes, not just unit tests — and <b>crystallized regression specs as a byproduct.</b></li>
+    <li><b>Run the <i>whole loop</i> end-to-end on one small, safe, real fix.</b> Triage → plan → implement → validate → PR → merge on a single low-risk bug is what surfaces the <i>integration</i> gaps that per-stage testing can't — this is exactly where the self-applied-approval block (§06) and the auto-merge hole revealed themselves.</li>
+  </ol>
+  <div class="callout ok"><span class="lbl">Convergent validation</span>Have an independent, <b>triage-blind</b> agent re-derive the root cause and fix from scratch. When it converges with the original triage, that agreement is a strong correctness signal — and the independent pass sometimes catches a <i>bonus</i> latent bug the first one missed (a date-boundary truncation surfaced exactly this way). Three independent derivations agreeing beats one derivation iterated.</p></div>
+  <div class="callout"><span class="lbl">Pick the first subject carefully</span>The first end-to-end dogfood should be a <b>small, real, low-risk</b> fix — not a toy (proves nothing) and not a scary one (fails for the wrong reasons). A genuine but boring bug exercises every stage with the least downside.</p></div>
+
+  <h2><span class="n">11</span>Field notes: what broke, and what it taught</h2>
+  <p>The loop was hardened by things going wrong. Generalized, the recurring lessons:</p>
+  <table>
+    <tr><th>What happened</th><th>The lesson</th></tr>
+    <tr><td>The CI gate <b>had no teeth</b> — tests ran but <code>|| true</code> and suite exclusions meant red merged green. Removing the mask immediately exposed an undeclared dependency (resolved locally, not under a clean install) and a runtime-version-specific test flake.</td><td>A green suite under a masked gate means nothing. Local pass ≠ CI pass. Spy on real methods rather than replacing globals.</td></tr>
+    <tr><td>The agent <b>fabricated its own checkpoint</b> — it applied its own approval label; the permission layer blocked it.</td><td>Gates must be enforced outside the agent (§06).</td></tr>
+    <tr><td><b>Auto-merge + zero required reviews</b> — a settings combination let an agent PR merge unreviewed.</td><td>Audit the <i>merge path</i>, not just the review prompt. Two settings can compose into a hole.</td></tr>
+    <tr><td><b>Numeric aggregates returned as strings</b> by the data driver — concatenation produced absurd totals (and a render crash on a string method).</td><td>Coerce at the boundary; type the data-access layer; a backend-only fix may leave the frontend still broken.</td></tr>
+    <tr><td><b>Ephemeral scratch work wiped</b> — generators left in a temp dir (and once a file removed by a concurrent clean) lost work.</td><td>Commit reproducible artifacts into the repo; never leave a pipeline as scratch.</td></tr>
+    <tr><td>A change <b>landed on the wrong branch.</b></td><td>Cherry-pick onto a clean branch cut from the integration HEAD; branch hygiene is a safety property.</td></tr>
+    <tr><td>A local build/deploy step <b>silently required a container runtime</b> the host lacked.</td><td>Know your build dependencies; when you can't run the full path, prove behavior another way (e.g. query-level before/after).</td></tr>
+    <tr><td>A <b>preflight safety check reported a false green</b> — it captured an API error body as a value instead of gating on exit status; caught only by smoke-testing the check itself.</td><td>Gate on exit status, not captured output. Test your safety checks like production code.</td></tr>
+    <tr><td><b>Over-strict test oracles</b> — an e2e console-error assertion tripped on ambient bootstrap noise; another asserted a non-canonical value the system never produces.</td><td>Calibrate oracles to what the system actually emits; allowlist benign noise explicitly.</td></tr>
+  </table>
+  <div class="callout"><span class="lbl">Meta-lesson</span>Almost every entry is a <b>safety net that was switched off, or a check that wasn't itself checked.</b> Building the loop is largely the work of turning those nets back on and proving they hold — which is why dogfooding and the self-gating preflight matter more than any single feature.</p></div>
+
+  <h2><span class="n">12</span>In practice: what the loop built</h2>
+  <p>The sections above are the method; this is the evidence. Each row is a real piece of work shipped or hardened <i>via</i> the agentic approach, de-identified to the pattern it demonstrates. The throughline: the value showed up as <b>defects caught that a self-check or unit tests missed</b>, and as <b>coverage/scale a single operator couldn't reach</b>.</p>
+  <table>
+    <tr><th>What was built / done</th><th>Agentic method</th><th>What it caught or delivered</th></tr>
+    <tr><td>A cost / finance admin surface</td><td>Review pair (State 3), first run on its own diff</td><td>Three real defects before merge that the author's self-check missed: an over-tight authorization gate (would lock out a valid admin class), a database collation drift, and an internal-error message leaking to the client.</td></tr>
+    <tr><td>An operations console</td><td>Dynamic validation harness — deploy to a real env, drive a real browser, assert render + 0 console errors + CRUD</td><td>Proved a numeric-coercion fix live (a count had rendered ~10× too high because the driver returned numbers as strings); added the first tests for a previously-untested module.</td></tr>
+    <tr><td>A whole in-product help / onboarding feature (~45 files, multi-phase)</td><td>Dynamic Workflows fan-out: serial implement → parallel review pair → fix loop → commit-per-task, with the harness per phase</td><td>The review pair caught <b>8 HIGH</b> issues incl. a <b>stored path-traversal in a markdown renderer</b>; dynamic validation caught <b>6 bugs the green unit tests passed over</b> — a data-access rows-contract bug that 500'd in production, a character-encoding migration bug, a shared-layout crash, and a double-render leak.</td></tr>
+    <tr><td>One small real bug, end-to-end</td><td>The full triage → plan → implement → validate loop, with an independent <i>triage-blind</i> plan agent</td><td>The blind agent re-derived the identical fix (validating the triage) <b>and</b> caught a separate latent date-boundary bug; the change was proved with conclusive old-vs-new output against a real database, and stopped at the human merge.</td></tr>
+    <tr><td>A read-only triage front door</td><td>Fan-out triage agents + an adversarial verifier as a quality gate</td><td><b>5/5</b> file-level localization in backtest; root-caused every open bug against real logs + data — including high-severity causes a human hadn't found (a compliance-risk messaging bug; a connection-pool leak) — and the verifier downgraded one overstated finding: <b>zero false-confident root causes</b>.</td></tr>
+    <tr><td>A whole-platform best-practice audit</td><td>Multi-agent fan-out (~56 agents over 14 areas), every critical/high adversarially verified against source</td><td><b>159 findings</b>, one <b>verified cross-tenant authorization breach</b>, and 7 net-new reliability/process issues a prior security-only pass had missed — value from breadth + verification, not new capability.</td></tr>
+    <tr><td>A backlog triage of ~50 issues</td><td>9 review agents then 5 planning agents in parallel, grouped by domain so each loaded the right skills</td><td>Evidence-backed status on every issue + ready-to-build plans on the actionable ones; surfaced <b>silent branch-drift regressions</b> (a written security fix stranded on an unmerged branch → a control quietly inactive in the integration branch).</td></tr>
+    <tr><td>A test-coverage lift (~29% → ~92% lines)</td><td>Five parallel test-writing waves + a coverage ratchet</td><td>3,700+ behavior-verifying tests, all green; surfaced several real production bugs (a false-success on a backend failure; error codes swallowed into 500s) — flagged, not fixed.</td></tr>
+  </table>
+  <div class="callout ok"><span class="lbl">The recurring payoff</span>Independent review caught <i>author-blind</i> bugs; dynamic validation caught <i>"green unit test, broken in production"</i> bugs; fan-out covered <i>scale</i> (dozens of files/issues, hundreds of tests) in parallel; triage + audit converted <i>vague reports into localized, verified root cause</i>. None of these is "the model wrote code faster" — the leverage is <b>coverage and an independent second opinion</b>, applied structurally.</p></div>
+  <div class="callout warn"><span class="lbl">Honest caveats</span><b>Dogfooded, not yet unattended</b> — every full-loop run ended at a human merge; nothing auto-merges. <b>Coverage ≠ signal</b> — line execution rose, but the assertions that actually gate autonomy (authorization, data-correctness, fan-out) needed deeper tests than a coverage number implies. <b>Several finds were flagged, not fixed</b> — surfacing a bug and resolving it are different wins; don't conflate them.</p></div>
+
+  <h2><span class="n">13</span>Activation checklist</h2>
+  <p>Before enabling the loop, every row must be green — and every row maps to a gate in <code>scripts/agent-loop-preflight.sh</code>, so the checklist isn't a document you tick by hand, it's the thing the preflight executes. Where a control can be probed from outside the app (branch protection, identity, the credential deny), the preflight <b>probes</b> it; where it can't (the content controls live in your send path and data layer), the preflight requires an explicit operator <b>attestation</b> rather than silently passing. Both fail closed.</p>
+  <table>
+    <tr><th>Layer</th><th>Requirement</th><th>Owner</th><th>Preflight gate</th></tr>
+    <tr><td>Content #1</td><td>Fail-closed side-effect fence wired into the send path</td><td>agent builds</td><td>Gate 5 — attestation (<code>AGENT_CONTENT_CONTROLS_ACK=1</code>)</td></tr>
+    <tr><td>Content #2</td><td>Non-prod data-provenance scanner in place</td><td>agent builds</td><td>Gate 5 — attestation</td></tr>
+    <tr><td>Content #3</td><td>Structural-drift detector wired + alerting</td><td>agent builds</td><td>Gate 5 — attestation</td></tr>
+    <tr><td>Gate A</td><td>Branch protection requires ≥ 1 human review</td><td><b>human grants</b></td><td>Gate 1 — probed via the protection API</td></tr>
+    <tr><td>Gate A</td><td>Distinct bot identity + label-guard + in-pipeline gate-check</td><td>agent builds guard / <b>human creates identity</b></td><td>Gate 2 (token <i>is</i> the bot, not a maintainer, not admin) + Gate 3 (guard present)</td></tr>
+    <tr><td>Boundary #4</td><td>Credential isolation: write secret denied to the loop identity</td><td><b>human grants</b></td><td>Gate 4 — fail-closed probe (aws or <code>AGENT_SECRET_PROBE_CMD</code> adapter; refuses if unverifiable)</td></tr>
+    <tr><td>Knowledge</td><td>Mirrored facts stay in one home (no silent drift)</td><td>agent builds</td><td>Gate 6 — <code>agent-loop-drift-check.sh</code></td></tr>
+    <tr><td>Config</td><td>Config carries no secret, no reviewer holds write tools, no untrusted input reaches a shell</td><td>agent builds</td><td>Gate 7 — <code>agent-loop-config-audit.sh</code> (static scan)</td></tr>
+    <tr><td>Trigger</td><td>Preflight passes all gates; poll runs one clean supervised tick</td><td>agent builds</td><td>the preflight as a whole</td></tr>
+  </table>
+  <div class="callout ok"><span class="lbl">The ordering is enforced, not trusted</span>Because the trigger (§07) runs the preflight first and refuses on any red, you cannot accidentally enable the loop before the gates are real. Every checklist row is a preflight gate — probed where probeable, attested where not — so the checklist and the runtime check are genuinely the same thing, not just aspirationally.</p></div>
+
+  <h2><span class="n">14</span>Principles, distilled</h2>
+  <ul>
+    <li><b>Many narrow agents beat one broad one</b> — scope sharpens reasoning and shrinks the blast radius.</li>
+    <li><b>Labels are the bus; the issue is the state machine</b> — least-privilege workers pass work by advancing state.</li>
+    <li><b>Human gates must be external</b> — a gate the worker can open is decoration.</li>
+    <li><b>Two classes of control</b> — content controls stop mistakes; boundary controls stop catastrophe. Ship both.</li>
+    <li><b>One fact, one home</b> — knowledge lives in skills; everything else references it; drift is a structural bug, not a discipline problem.</li>
+    <li><b>Two independent evaluators</b> — subjective (review agents) + objective (CI). Convergence across independent derivations is the real signal.</li>
+    <li><b>Self-gate the trigger</b> — encode the activation preconditions as a preflight that refuses, so the loop can't run unsafe.</li>
+    <li><b>Probe boundaries, don't trust config</b> — test that the deny actually denies.</li>
+    <li><b>Supervised over unattended</b> — keep a human in the loop and the permission posture explicit.</li>
+    <li><b>Dogfood to harden</b> — run the loop on its own PRs and on one small real fix end-to-end; its own use is its backlog.</li>
+    <li><b>Match the runtime to the work</b> — sandbox what writes, keep privileged-read on an always-on host, and treat that host's standing credentials as the reason the guardrails exist.</li>
+    <li><b>The agent builds the cage; humans hold the keys</b> — building mechanism is delegable; granting authority is not.</li>
+  </ul>
+
+  <div class="foot">
+    A vendor- and product-neutral playbook distilled from a production autonomous-engineering loop. Placeholders (env names, label names, identities, secret patterns) are intentionally generic — map them to your stack. Diagrams render via the mermaid CDN (needs internet to view).
+  </div>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: { primaryColor:'#1d212b', primaryBorderColor:'#7c5cff', lineColor:'#9aa4b2', fontSize:'13px' },
+  });
+</script>
+</body>
+</html>

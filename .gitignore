@@ -1,0 +1,19 @@
+# Local config — never commit real values
+.env
+.env.local
+
+# Loop run logs / scratch
+*.log
+.agent-*.log
+.claude/worktrees/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Dependency dirs (if you add tooling)
+node_modules/
+__pycache__/
+.venv/

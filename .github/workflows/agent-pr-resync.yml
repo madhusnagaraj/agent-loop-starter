@@ -1,0 +1,45 @@
+name: Agent PR Resync
+
+# Strips the validation verdict labels (`self-review-passed` / `self-review-needs-fixes`) the
+# moment a PR's head changes. State-3 evidence is bound to a specific commit (the evidence
+# bundle records `Validated-HEAD: <sha>`); a new push makes that evidence stale, so the verdict
+# must be re-earned against the new head.
+#
+# This is the BOUNDARY form of the SHA check. `/validate` and `/poll` already track the head in
+# prose, but a prompt can't be the guarantee — this workflow runs outside the agent and removes
+# the label regardless of what any worker does, so stale evidence can never ride a new commit
+# into a human's merge decision.
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  resync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Remove stale validation labels on new head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          removed=no
+          for label in self-review-passed self-review-needs-fixes; do
+            if gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name' | grep -qx "$label"; then
+              gh pr edit "$PR" --repo "$REPO" --remove-label "$label"
+              removed=yes
+            fi
+          done
+          if [ "$removed" = "yes" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body "Validation labels cleared — the PR head moved to \`${SHA}\`. Prior State-3 evidence was bound to an earlier commit and no longer applies; \`/validate\` must run again against the new head before a human merges."
+            echo "stale validation labels removed for new head $SHA"
+          else
+            echo "no validation labels to clear for $SHA"
+          fi

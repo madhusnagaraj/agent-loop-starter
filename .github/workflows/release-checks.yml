@@ -1,0 +1,30 @@
+name: Release checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          bash -n scripts/agent-loop-preflight.sh
+          bash -n scripts/agent-loop-drift-check.sh
+          bash -n scripts/agent-loop-config-audit.sh
+          bash -n scripts/setup-labels.sh
+      - name: Check structural drift
+        run: bash scripts/agent-loop-drift-check.sh
+      - name: Parse workflow YAML
+        run: |
+          # nullglob: optional/cloud-triggers/ is optional, and an unmatched glob would otherwise be
+          # passed through literally and crash YAML.load_file in any repo that skipped it.
+          shopt -s nullglob
+          files=(.github/workflows/*.yml optional/cloud-triggers/*.yml)
+          ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file) }' "${files[@]}"

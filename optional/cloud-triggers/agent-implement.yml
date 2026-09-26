@@ -1,0 +1,64 @@
+name: Agent Implement (optional cloud trigger)
+
+# OPTIONAL. The loop runs prompt-only via the /poll command locally — you do not need this file.
+# Add it ONLY if you want cloud event-triggering: when a human applies `approved`, fire the
+# /implement command in CI. No logic of its own — the brain is .claude/commands/implement.md
+# (single source of truth). Just the trigger + the fail-closed gate-check. Never merges.
+#
+# To activate: copy to .github/workflows/, set the CLAUDE_CODE_OAUTH_TOKEN secret and the
+# AGENT_GATE_MAINTAINERS repo variable.
+#
+# PRECONDITION — this trigger runs the per-event gate-check ONLY, not the full activation
+# preflight. `scripts/agent-loop-preflight.sh` (merge gate, bot identity, credential boundary,
+# content controls, drift) must already PASS in your environment before you enable this file.
+# The cloud runtime assumes those activation gates hold; it does not re-prove them each fire.
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  gate-check:
+    if: ${{ github.event.label.name == 'approved' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a human-applied gate label
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+          ACTOR_TYPE: ${{ github.event.sender.type }}
+          MAINTAINERS: ${{ vars.AGENT_GATE_MAINTAINERS }}
+        run: |
+          set -euo pipefail
+          allowed=no
+          if [ "$ACTOR_TYPE" != "Bot" ] && [ -n "$MAINTAINERS" ]; then
+            case ",${MAINTAINERS}," in *",${ACTOR},"*) allowed=yes ;; esac
+          fi
+          if [ "$allowed" != "yes" ]; then
+            echo "::error::'approved' applied by non-authorized actor '$ACTOR' (type=$ACTOR_TYPE) — refusing to implement."
+            exit 1
+          fi
+
+  implement:
+    needs: gate-check
+    if: ${{ github.event.label.name == 'approved' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.AGENT_BASE_BRANCH || 'main' }}
+          fetch-depth: 0
+      # Runs the committed slash command; .claude/commands/implement.md owns what "implement" means.
+      # That command branches, writes tests, opens a PR, and never merges.
+      - uses: anthropics/claude-code-action@v1
+        with:
+          prompt: "/implement ${{ github.event.issue.number }}"
+          claude_args: "--max-turns 25"
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

@@ -1,0 +1,62 @@
+name: Agent Plan (optional cloud trigger)
+
+# OPTIONAL. The loop runs prompt-only via the /poll command locally — you do not need this file.
+# Add it ONLY if you want cloud event-triggering: when a human applies `ready`, fire the /plan
+# command in CI. It contains no logic of its own — the brain is .claude/commands/plan.md
+# (single source of truth). This file is just the trigger + the fail-closed gate-check.
+#
+# To activate: copy to .github/workflows/, set the CLAUDE_CODE_OAUTH_TOKEN secret and the
+# AGENT_GATE_MAINTAINERS repo variable.
+#
+# PRECONDITION — this trigger runs the per-event gate-check ONLY, not the full activation
+# preflight. `scripts/agent-loop-preflight.sh` (merge gate, bot identity, credential boundary,
+# content controls, drift) must already PASS in your environment before you enable this file.
+# The cloud runtime assumes those activation gates hold; it does not re-prove them each fire.
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  gate-check:
+    if: ${{ github.event.label.name == 'ready' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a human-applied gate label
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+          ACTOR_TYPE: ${{ github.event.sender.type }}
+          MAINTAINERS: ${{ vars.AGENT_GATE_MAINTAINERS }}
+        run: |
+          set -euo pipefail
+          allowed=no
+          if [ "$ACTOR_TYPE" != "Bot" ] && [ -n "$MAINTAINERS" ]; then
+            case ",${MAINTAINERS}," in *",${ACTOR},"*) allowed=yes ;; esac
+          fi
+          if [ "$allowed" != "yes" ]; then
+            echo "::error::'ready' applied by non-authorized actor '$ACTOR' (type=$ACTOR_TYPE) — refusing to plan."
+            exit 1
+          fi
+
+  plan:
+    needs: gate-check
+    if: ${{ github.event.label.name == 'ready' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.AGENT_BASE_BRANCH || 'main' }}
+          fetch-depth: 0
+      # Runs the committed slash command; .claude/commands/plan.md owns what "plan" means.
+      - uses: anthropics/claude-code-action@v1
+        with:
+          prompt: "/plan ${{ github.event.issue.number }}"
+          claude_args: "--max-turns 12"
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
